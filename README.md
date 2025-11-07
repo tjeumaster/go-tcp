@@ -1,15 +1,18 @@
 # Go TCP Client
 
-A simple and efficient TCP client library for Go with support for message sending, listening, and automatic retry functionality.
+A thread-safe, efficient TCP client library for Go with support for message sending, listening, automatic retry functionality, and context-based timeout control.
 
 ## Features
 
-- **TCP Connection Management**: Connect and disconnect from TCP servers
+- **Thread-Safe Operations**: All methods are protected with mutexes for concurrent access
+- **TCP Connection Management**: Connect and disconnect from TCP servers with status checking
 - **Send Messages**: Send messages to the server and receive responses
 - **Listen to Server Messages**: Continuously listen for incoming messages from the server using a goroutine
 - **Retry Mechanism**: Automatically retry connections with configurable delays
 - **Context Support**: Use Go contexts to control listening timeouts and cancellation
+- **Read Deadlines**: Automatic timeout handling for read operations
 - **Non-blocking Send**: Buffered message channel prevents blocking when sending messages
+- **Error Handling**: Comprehensive error reporting with wrapped errors
 
 ## Installation
 
@@ -120,6 +123,12 @@ Closes the TCP connection.
 
 **Returns:** Error if disconnection fails
 
+### IsConnected() bool
+
+Checks if the client is currently connected to a server.
+
+**Returns:** `true` if connected, `false` otherwise
+
 ### SendMessage(message string) (string, error)
 
 Sends a message to the server and waits for a response.
@@ -182,19 +191,45 @@ for msg := range client.Messages {
 }
 ```
 
+### Example: Connection Status Checking
+
+```go
+client := tcp.NewClient("127.0.0.1", "3000")
+
+// Check connection status
+if client.IsConnected() {
+	fmt.Println("Already connected")
+} else {
+	err := client.Connect()
+	if err != nil {
+		fmt.Println("Connection failed:", err)
+		return
+	}
+	fmt.Println("Connected successfully")
+}
+```
+
 ## Architecture Notes
 
-- **Thread-Safe Listening**: Messages are received in a separate goroutine, allowing non-blocking message handling
+- **Thread-Safe Operations**: All connection operations are protected with read-write mutexes
 - **Buffered Channel**: The `Messages` channel has a capacity of 100 to prevent blocking on slow receivers
+- **Read Deadlines**: Automatic timeout handling prevents indefinite blocking on read operations
 - **Context Integration**: Full support for Go's context pattern for timeout and cancellation control
+- **Error Wrapping**: All errors are wrapped with additional context using `fmt.Errorf`
+
+## Constants
+
+- `DefaultBufferSize = 8096`: Default buffer size for reading messages
+- `DefaultChannelBuffer = 100`: Default capacity for the messages channel
 
 ## Error Handling
 
 The client provides detailed error messages for:
-- Connection failures
+- Connection failures (with retry information)
 - Message sending errors
 - Response reading errors
-- Listener errors
+- Listener errors (including timeout and cancellation)
+- Connection state errors
 
 ## License
 
