@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+
 	"github.com/tjeumaster/go-tcp/tcp"
 )
 
@@ -24,14 +25,14 @@ func main() {
 		return
 	}
 
-	count := 0
+	err = client.SendMessage("Hello, Server!")
+	if err != nil {
+		fmt.Println("Error sending message:", err)
+	}
 
 	for msg := range client.Messages {
 		fmt.Println("Received message:", msg)
-		count++
-		if count >= 5 {
-			break
-		}
+		cancel() // Stop listening after first message for demo
 	}
 
 	fmt.Println("Finished receiving messages. Exiting.")

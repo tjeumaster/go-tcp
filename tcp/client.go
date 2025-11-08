@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	DefaultBufferSize   = 8096
+	DefaultBufferSize    = 4096
 	DefaultChannelBuffer = 100
-	DefaultReadTimeout  = 5 * time.Second
+	DefaultReadTimeout   = 5 * time.Second
 )
 
 var (
@@ -23,11 +23,11 @@ var (
 )
 
 type Client struct {
-	Host     string
-	Port     string
-	conn     net.Conn
-	Messages chan string
-	mu       sync.RWMutex
+	Host      string
+	Port      string
+	conn      net.Conn
+	Messages  chan string
+	mu        sync.RWMutex
 	listening atomic.Bool
 }
 
@@ -98,40 +98,33 @@ func (c *Client) IsConnected() bool {
 	return c.conn != nil
 }
 
-func (c *Client) SendMessage(message string) (string, error) {
+func (c *Client) SendMessage(message string) error {
 	c.mu.RLock()
 	conn := c.conn
 	c.mu.RUnlock()
 
 	if conn == nil {
-		return "", ErrNotConnected
+		return ErrNotConnected
 	}
 
 	// Set write deadline
 	if err := conn.SetWriteDeadline(time.Now().Add(DefaultReadTimeout)); err != nil {
-		return "", fmt.Errorf("failed to set write deadline: %w", err)
+		return fmt.Errorf("failed to set write deadline: %w", err)
 	}
 
 	_, err := conn.Write([]byte(message))
 	if err != nil {
-		return "", fmt.Errorf("failed to send message: %w", err)
+		return fmt.Errorf("failed to send message: %w", err)
 	}
 
-	// Set read deadline
-	if err := conn.SetReadDeadline(time.Now().Add(DefaultReadTimeout)); err != nil {
-		return "", fmt.Errorf("failed to set read deadline: %w", err)
-	}
-
-	buffer := make([]byte, DefaultBufferSize)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	return string(buffer[:n]), nil
+	return nil
 }
 
 func (c *Client) Listen(ctx context.Context) error {
+	return c.ListenWithRetry(ctx, 0, 0)
+}
+
+func (c *Client) ListenWithRetry(ctx context.Context, maxRetries int, retryDelay time.Duration) error {
 	// Prevent multiple Listen() calls
 	if !c.listening.CompareAndSwap(false, true) {
 		return ErrAlreadyListening
@@ -155,6 +148,7 @@ func (c *Client) Listen(ctx context.Context) error {
 		}()
 
 		buffer := make([]byte, DefaultBufferSize)
+		retryCount := 0
 
 		for {
 			// Check context first
@@ -194,7 +188,42 @@ func (c *Client) Listen(ctx context.Context) error {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					continue
 				}
+
+				// Connection error - attempt retry if enabled
 				fmt.Printf("Listen read error: %v\n", err)
+
+				if maxRetries > 0 && retryCount < maxRetries {
+					retryCount++
+					fmt.Printf("Connection lost. Attempting to reconnect (%d/%d)...\n", retryCount, maxRetries)
+
+					// Close the old connection
+					c.Disconnect()
+
+					// Wait before retrying
+					time.Sleep(retryDelay)
+
+					// Check context before reconnecting
+					if ctx.Err() != nil {
+						return
+					}
+
+					// Attempt to reconnect
+					err := c.Connect()
+					if err != nil {
+						fmt.Printf("Reconnection attempt %d failed: %v\n", retryCount, err)
+						if retryCount >= maxRetries {
+							fmt.Println("Max reconnection attempts reached. Stopping listener.")
+							return
+						}
+						continue
+					}
+
+					fmt.Printf("Reconnected successfully on attempt %d\n", retryCount)
+					retryCount = 0 // Reset retry count on successful reconnection
+					continue
+				}
+
+				// No retry configured or max retries exceeded
 				return
 			}
 

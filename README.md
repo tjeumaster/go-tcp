@@ -8,7 +8,8 @@ A thread-safe, efficient TCP client library for Go with support for message send
 - **TCP Connection Management**: Connect and disconnect from TCP servers with status checking
 - **Send Messages**: Send messages to the server and receive responses with automatic timeout handling
 - **Listen to Server Messages**: Continuously listen for incoming messages from the server using a goroutine
-- **Retry Mechanism**: Automatically retry connections with configurable delays
+- **Connection Retry**: Automatically retry connections with configurable delays
+- **Auto-Reconnect on Disconnect**: Automatically reconnect when connection is lost during listening
 - **Context Support**: Use Go contexts to control listening timeouts and cancellation
 - **Read/Write Deadlines**: Automatic timeout handling for both read and write operations
 - **Non-blocking Send**: Buffered message channel prevents blocking when sending messages
@@ -138,20 +139,23 @@ Checks if the client is currently listening for messages.
 
 **Returns:** `true` if actively listening, `false` otherwise
 
-### SendMessage(message string) (string, error)
+### SendMessage(message string) error
 
-Sends a message to the server and waits for a response with automatic timeout handling.
+Sends a message to the server with automatic timeout handling.
 
 **Parameters:**
 - `message`: Message to send
 
-**Returns:** Server response and error (if any)
+**Returns:** Error (if any)
 
-**Note:** Sets both write and read deadlines using `DefaultReadTimeout` (5 seconds)
+**Note:** 
+- Only sends the message; responses are received through the `Messages` channel when using `Listen()`
+- Sets write deadline using `DefaultReadTimeout` (5 seconds)
+- Safe to call from multiple goroutines concurrently
 
 ### Listen(ctx context.Context) error
 
-Starts listening for messages from the server in a background goroutine.
+Starts listening for messages from the server in a background goroutine without automatic reconnection.
 
 **Parameters:**
 - `ctx`: Context for controlling the listening session (supports timeout and cancellation)
@@ -163,6 +167,24 @@ Starts listening for messages from the server in a background goroutine.
 - Only one `Listen()` call can be active at a time (returns `ErrAlreadyListening` if already listening)
 - Uses context deadline if provided, otherwise applies a 30-second read timeout
 - Automatically recreates the message channel when listening stops
+- Connection errors will stop the listener
+
+### ListenWithRetry(ctx context.Context, maxRetries int, retryDelay time.Duration) error
+
+Starts listening for messages with automatic reconnection on connection loss.
+
+**Parameters:**
+- `ctx`: Context for controlling the listening session (supports timeout and cancellation)
+- `maxRetries`: Number of reconnection attempts when connection is lost (0 = no retry)
+- `retryDelay`: Duration to wait between reconnection attempts
+
+**Returns:** Error if listening setup fails
+
+**Note:**
+- Automatically attempts to reconnect when connection is lost
+- Resets retry count after each successful reconnection
+- Continues listening seamlessly after reconnection
+- Stops after max retries exceeded or context cancelled
 
 ## Examples
 
@@ -224,6 +246,73 @@ if client.IsConnected() {
 }
 ```
 
+### Example: Listen with Automatic Reconnection
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+client := tcp.NewClient("127.0.0.1", "3000")
+
+err := client.Connect()
+if err != nil {
+	fmt.Println("Error connecting:", err)
+	return
+}
+defer client.Disconnect()
+
+// Listen with automatic reconnection (5 retries, 2 second delay)
+err = client.ListenWithRetry(ctx, 5, 2*time.Second)
+if err != nil {
+	fmt.Println("Error starting listener:", err)
+	return
+}
+
+// Receive messages - will continue receiving even after reconnections
+for msg := range client.Messages {
+	fmt.Println("Received:", msg)
+}
+```
+
+### Example: Send and Receive Pattern
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+client := tcp.NewClient("127.0.0.1", "3000")
+
+err := client.Connect()
+if err != nil {
+	fmt.Println("Error connecting:", err)
+	return
+}
+defer client.Disconnect()
+
+// Start listening for responses
+err = client.Listen(ctx)
+if err != nil {
+	fmt.Println("Error starting listener:", err)
+	return
+}
+
+// Send messages from main goroutine
+err = client.SendMessage("Hello, Server!")
+if err != nil {
+	fmt.Println("Error sending message:", err)
+}
+
+// Receive responses from listener goroutine
+for msg := range client.Messages {
+	fmt.Println("Server response:", msg)
+	
+	// Can send more messages based on responses
+	if msg == "READY" {
+		client.SendMessage("START")
+	}
+}
+```
+
 ## Architecture Notes
 
 - **Thread-Safe Operations**: All connection operations are protected with read-write mutexes
@@ -236,6 +325,8 @@ if client.IsConnected() {
 - **Error Wrapping**: All errors are wrapped with additional context using `fmt.Errorf`
 - **Connection Safety**: Double-checks connection state within goroutines to prevent race conditions
 - **Channel Recreation**: Automatically recreates the message channel when listening stops, allowing multiple `Listen()` calls in sequence
+- **Automatic Reconnection**: `ListenWithRetry()` automatically reconnects on connection loss with configurable retry logic
+- **Separate Send/Receive**: `SendMessage()` only sends; all responses come through the `Messages` channel for clean concurrency
 
 ## Constants
 
