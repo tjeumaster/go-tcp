@@ -153,6 +153,22 @@ Sends a message to the server with automatic timeout handling.
 - Sets write deadline using `DefaultReadTimeout` (5 seconds)
 - Safe to call from multiple goroutines concurrently
 
+### SendAndReceive(message string, timeout time.Duration) (string, error)
+
+Sends a message and waits for a single response. Useful for simple request-response patterns.
+
+**Parameters:**
+- `message`: Message to send
+- `timeout`: Maximum time to wait for the response
+
+**Returns:** Response string and error (if any)
+
+**Note:**
+- Cannot be used while `Listen()` is active (returns error if listening)
+- Blocks until response is received or timeout expires
+- Best for synchronous request-response patterns
+- Sets both write and read deadlines
+
 ### Listen(ctx context.Context) error
 
 Starts listening for messages from the server in a background goroutine without automatic reconnection.

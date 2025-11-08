@@ -250,3 +250,46 @@ func (c *Client) ListenWithRetry(ctx context.Context, maxRetries int, retryDelay
 func (c *Client) IsListening() bool {
 	return c.listening.Load()
 }
+
+// SendAndReceive sends a message and waits for a single response.
+// This is a convenience method that sends a message and returns the first response received.
+// It's useful for request-response patterns where you don't need continuous listening.
+func (c *Client) SendAndReceive(message string, timeout time.Duration) (string, error) {
+	// Check if Listen() is already running
+	if c.IsListening() {
+		return "", errors.New("cannot use SendAndReceive while Listen is active")
+	}
+
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+
+	if conn == nil {
+		return "", ErrNotConnected
+	}
+
+	// Set write deadline
+	if err := conn.SetWriteDeadline(time.Now().Add(DefaultReadTimeout)); err != nil {
+		return "", fmt.Errorf("failed to set write deadline: %w", err)
+	}
+
+	// Send the message
+	_, err := conn.Write([]byte(message))
+	if err != nil {
+		return "", fmt.Errorf("failed to send message: %w", err)
+	}
+
+	// Set read deadline for response
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return "", fmt.Errorf("failed to set read deadline: %w", err)
+	}
+
+	// Read the response
+	buffer := make([]byte, DefaultBufferSize)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return string(buffer[:n]), nil
+}
