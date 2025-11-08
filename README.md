@@ -4,15 +4,18 @@ A thread-safe, efficient TCP client library for Go with support for message send
 
 ## Features
 
-- **Thread-Safe Operations**: All methods are protected with mutexes for concurrent access
+- **Thread-Safe Operations**: All methods are protected with mutexes and atomic operations for concurrent access
 - **TCP Connection Management**: Connect and disconnect from TCP servers with status checking
-- **Send Messages**: Send messages to the server and receive responses
+- **Send Messages**: Send messages to the server and receive responses with automatic timeout handling
 - **Listen to Server Messages**: Continuously listen for incoming messages from the server using a goroutine
 - **Retry Mechanism**: Automatically retry connections with configurable delays
 - **Context Support**: Use Go contexts to control listening timeouts and cancellation
-- **Read Deadlines**: Automatic timeout handling for read operations
+- **Read/Write Deadlines**: Automatic timeout handling for both read and write operations
 - **Non-blocking Send**: Buffered message channel prevents blocking when sending messages
-- **Error Handling**: Comprehensive error reporting with wrapped errors
+- **Error Definitions**: Pre-defined error types for better error handling
+- **Listening Status**: Track whether the client is actively listening with `IsListening()`
+- **Multiple Listen Prevention**: Prevents multiple concurrent `Listen()` calls
+- **Smart Timeout Management**: Configurable default timeouts with context deadline support
 
 ## Installation
 
@@ -129,14 +132,22 @@ Checks if the client is currently connected to a server.
 
 **Returns:** `true` if connected, `false` otherwise
 
+### IsListening() bool
+
+Checks if the client is currently listening for messages.
+
+**Returns:** `true` if actively listening, `false` otherwise
+
 ### SendMessage(message string) (string, error)
 
-Sends a message to the server and waits for a response.
+Sends a message to the server and waits for a response with automatic timeout handling.
 
 **Parameters:**
 - `message`: Message to send
 
 **Returns:** Server response and error (if any)
+
+**Note:** Sets both write and read deadlines using `DefaultReadTimeout` (5 seconds)
 
 ### Listen(ctx context.Context) error
 
@@ -147,7 +158,11 @@ Starts listening for messages from the server in a background goroutine.
 
 **Returns:** Error if listening setup fails
 
-**Note:** Messages are received through the `client.Messages` channel (buffered, capacity 100)
+**Note:** 
+- Messages are received through the `client.Messages` channel (buffered, capacity 100)
+- Only one `Listen()` call can be active at a time (returns `ErrAlreadyListening` if already listening)
+- Uses context deadline if provided, otherwise applies a 30-second read timeout
+- Automatically recreates the message channel when listening stops
 
 ## Examples
 
@@ -212,24 +227,51 @@ if client.IsConnected() {
 ## Architecture Notes
 
 - **Thread-Safe Operations**: All connection operations are protected with read-write mutexes
+- **Atomic Listening State**: Uses `atomic.Bool` to track listening state without locks
 - **Buffered Channel**: The `Messages` channel has a capacity of 100 to prevent blocking on slow receivers
-- **Read Deadlines**: Automatic timeout handling prevents indefinite blocking on read operations
+- **Read/Write Deadlines**: Automatic timeout handling for both read and write operations
+  - Send operations timeout after `DefaultReadTimeout` (5 seconds)
+  - Listen operations use context deadline or 30-second read timeout
 - **Context Integration**: Full support for Go's context pattern for timeout and cancellation control
 - **Error Wrapping**: All errors are wrapped with additional context using `fmt.Errorf`
+- **Connection Safety**: Double-checks connection state within goroutines to prevent race conditions
+- **Channel Recreation**: Automatically recreates the message channel when listening stops, allowing multiple `Listen()` calls in sequence
 
 ## Constants
 
 - `DefaultBufferSize = 8096`: Default buffer size for reading messages
 - `DefaultChannelBuffer = 100`: Default capacity for the messages channel
+- `DefaultReadTimeout = 5 seconds`: Default timeout for send/receive operations
+
+## Error Types
+
+Pre-defined error variables for better error handling:
+
+- `ErrNotConnected`: Returned when operations are attempted without an active connection
+- `ErrAlreadyListening`: Returned when `Listen()` is called while already listening
+- `ErrConnectionClosed`: Returned when the connection is unexpectedly closed
 
 ## Error Handling
 
-The client provides detailed error messages for:
-- Connection failures (with retry information)
-- Message sending errors
-- Response reading errors
-- Listener errors (including timeout and cancellation)
-- Connection state errors
+The client provides detailed error messages and predefined error types:
+
+- **ErrNotConnected**: Connection required but not established
+- **ErrAlreadyListening**: Multiple concurrent listen attempts
+- **ErrConnectionClosed**: Connection unexpectedly closed
+- Custom wrapped errors: All errors are wrapped with operation context for debugging
+
+### Example: Error Handling
+
+```go
+import "errors"
+
+err := client.SendMessage("test")
+if errors.Is(err, tcp.ErrNotConnected) {
+	fmt.Println("Need to connect first")
+} else if err != nil {
+	fmt.Println("Send failed:", err)
+}
+```
 
 ## License
 
