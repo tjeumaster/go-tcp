@@ -290,7 +290,7 @@ for msg := range client.Messages {
 }
 ```
 
-### Example: Send and Receive Pattern
+### Example: Send and Receive Pattern (Continuous Listening)
 
 ```go
 ctx, cancel := context.WithCancel(context.Background())
@@ -329,6 +329,35 @@ for msg := range client.Messages {
 }
 ```
 
+### Example: Simple Request-Response Pattern
+
+```go
+client := tcp.NewClient("127.0.0.1", "3000")
+
+err := client.Connect()
+if err != nil {
+	fmt.Println("Error connecting:", err)
+	return
+}
+defer client.Disconnect()
+
+// Send a request and get immediate response (5 second timeout)
+response, err := client.SendAndReceive("GET_STATUS", 5*time.Second)
+if err != nil {
+	fmt.Println("Error:", err)
+	return
+}
+fmt.Println("Status:", response)
+
+// Send another request
+response, err = client.SendAndReceive("GET_DATA", 5*time.Second)
+if err != nil {
+	fmt.Println("Error:", err)
+	return
+}
+fmt.Println("Data:", response)
+```
+
 ## Architecture Notes
 
 - **Thread-Safe Operations**: All connection operations are protected with read-write mutexes
@@ -343,6 +372,7 @@ for msg := range client.Messages {
 - **Channel Recreation**: Automatically recreates the message channel when listening stops, allowing multiple `Listen()` calls in sequence
 - **Automatic Reconnection**: `ListenWithRetry()` automatically reconnects on connection loss with configurable retry logic
 - **Separate Send/Receive**: `SendMessage()` only sends; all responses come through the `Messages` channel for clean concurrency
+- **Request-Response Pattern**: `SendAndReceive()` provides simple synchronous request-response for one-off queries
 
 ## Constants
 
